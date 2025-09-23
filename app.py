@@ -1,20 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-app.py — Streamlit 前端（购物车合单 + 两段式确认 + 待支付→已支付后展示取件码）
-运行：
-  streamlit run app.py
-
-依赖：
-  pip install streamlit langchain langchain-openai python-dotenv requests tiktoken
-
-环境变量（.env）：
-  OPENAI_API_KEY=sk-xxxx
-  FT_MODEL=ft:gpt-4o-mini-2024-07-18:personal::YOUR_ID  # 或基座
-  MODEL_TEMP=0.3
-  BOT_NAME=BobaBot
-  BACKEND_URL=http://localhost:8000
-  BACKEND_TOKEN=change-this-to-a-long-random-secret
-"""
 
 import os
 import re
@@ -23,21 +6,19 @@ import uuid
 import requests
 import streamlit as st
 from dotenv import load_dotenv
-
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
-
 from prompts import *
 from tools import TOOLS, quote_price, list_menu, can_make_hot
 from menu_config import PRICES, CATEGORY, EXTRAS
 
 # ========== 读取 .env ==========
 load_dotenv()
-FT_MODEL = os.getenv("FT_MODEL") or os.getenv("BASE_FALLBACK_MODEL", "gpt-4o-mini-2024-07-18")
-MODEL_TEMP = float(os.getenv("MODEL_TEMP", "0.3"))
+FT_MODEL = os.getenv("FT_MODEL")
+MODEL_TEMP = float(os.getenv("TEMPERATURE"))
 BOT_NAME = os.getenv("BOT_NAME", "BobaBot")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
-BACKEND_TOKEN = os.getenv("BACKEND_TOKEN", "devtoken")
+BACKEND_URL = os.getenv("BACKEND_URL",)
+BACKEND_TOKEN = os.getenv("BACKEND_TOKEN")
 
 # ========== 模型与提示词 ==========
 SYSTEM_PROMPT = get_system_prompt(BOT_NAME)
@@ -46,7 +27,7 @@ llm_with_tools = llm.bind_tools(TOOLS)
 
 # ========== Streamlit UI ==========
 st.set_page_config(page_title=f"{BOT_NAME} · 奶茶店员", layout="centered")
-st.title(f"🧋 {BOT_NAME} · 奶茶店员（购物车合单）")
+st.title(f"🧋 {BOT_NAME} ")
 
 # ========== 会话状态 ==========
 if "msgs" not in st.session_state:
@@ -360,6 +341,6 @@ def run_turn(user_text: str):
         st.chat_message("assistant").write(ai.content or "（已收到）")
 
 # ===== 输入框 =====
-user = st.chat_input("加入购物车 → 去结算 → 确认订单 → 确认下单（生成待支付订单）→ 回复“已支付”获取取件码")
+user = st.chat_input("加入购物车 → 确认订单 → 确认下单（生成待支付订单）→ 回复“已支付”获取取件码")
 if user:
     run_turn(user)
