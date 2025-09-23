@@ -1,0 +1,18 @@
+# venv
+.venv/
+
+
+# env files
+.env
+.env.*
+*.env
+
+
+# python cache
+__pycache__/
+*.pyc
+
+
+# sqlite
+*.db
+/data/
