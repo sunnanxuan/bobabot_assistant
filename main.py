@@ -16,8 +16,8 @@ import random
 import sqlite3
 from datetime import datetime
 from typing import List, Optional
-
-from fastapi import FastAPI, Header, HTTPException
+import requests
+from fastapi import FastAPI, Header, HTTPException, UploadFile, File, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from dotenv import load_dotenv
@@ -27,10 +27,18 @@ from dotenv import load_dotenv
 from menu_config import PRICES, CATEGORY, EXTRAS, hot_allowed
 
 # 加载 .env
-load_dotenv()
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
 
 DB_PATH = os.getenv("ORDERS_DB", "orders.db")
 BACKEND_TOKEN = os.getenv("BACKEND_TOKEN", "devtoken")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-mini-transcribe")
+TTS_MODEL = os.getenv("TTS_MODEL", "gpt-4o-mini-tts")
+TTS_VOICE = os.getenv("TTS_VOICE", "alloy")
+TTS_INSTRUCTIONS = os.getenv("TTS_INSTRUCTIONS", "Speak clearly and naturally.")
 
 # 确保数据库目录存在
 _db_dir = os.path.dirname(DB_PATH)
@@ -363,3 +371,107 @@ def mark_paid(order_id: str = Path(...), authorization: str = Header(None)) -> O
         )
     finally:
         conn.close()
+
+
+
+
+# =========================
+# Voice AI: STT / TTS APIs
+# =========================
+
+MAX_AUDIO_BYTES = 25 * 1024 * 1024  # OpenAI docs: uploads currently limited to 25MB
+
+def _require_auth(authorization: str):
+    print("AUTH HEADER =", authorization)
+    print("EXPECTED   =", f"Bearer {BACKEND_TOKEN}")
+    if authorization != f"Bearer {BACKEND_TOKEN}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+@app.post("/voice/stt")
+async def voice_stt(
+    file: UploadFile = File(...),
+    authorization: str = Header(None)
+):
+    """
+    Speech-to-Text: upload audio -> transcript text
+    """
+    _require_auth(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set on backend")
+
+    audio_bytes = await file.read()
+    if len(audio_bytes) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio file too large (max 25MB)")
+
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    data = {
+        "model": STT_MODEL,
+        "response_format": "json",  # returns {"text": "..."}
+    }
+    files = {
+        "file": (
+            file.filename or "audio.wav",
+            audio_bytes,
+            file.content_type or "application/octet-stream",
+        )
+    }
+
+    r = requests.post(
+        "https://api.openai.com/v1/audio/transcriptions",
+        headers=headers,
+        data=data,
+        files=files,
+        timeout=60,
+    )
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+
+    j = r.json()
+    return {"text": (j.get("text") or "").strip()}
+
+@app.post("/voice/tts")
+def voice_tts(
+    payload: dict,
+    authorization: str = Header(None)
+):
+    """
+    Text-to-Speech: text -> mp3 bytes
+    payload: { "text": "...", "voice": "alloy"(optional), "instructions": "..."(optional) }
+    """
+    _require_auth(authorization)
+    if not OPENAI_API_KEY:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set on backend")
+
+    text = (payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Missing text")
+    # OpenAI docs: input text max length 4096 chars
+    text = text[:4096]
+
+    voice = payload.get("voice") or TTS_VOICE
+    instructions = payload.get("instructions") or TTS_INSTRUCTIONS
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": TTS_MODEL,
+        "voice": voice,
+        "input": text,
+        "instructions": instructions,
+        "response_format": "mp3",
+    }
+
+    r = requests.post(
+        "https://api.openai.com/v1/audio/speech",
+        headers=headers,
+        json=body,
+        timeout=60,
+    )
+
+    if r.status_code >= 400:
+        raise HTTPException(status_code=r.status_code, detail=r.text)
+
+    return Response(content=r.content, media_type="audio/mpeg")

@@ -13,12 +13,16 @@ from tools import TOOLS, quote_price, list_menu, can_make_hot
 from menu_config import PRICES, CATEGORY, EXTRAS
 
 # ========== 读取 .env ==========
-load_dotenv()
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(dotenv_path=Path(__file__).with_name(".env"))
+
 FT_MODEL = os.getenv("FT_MODEL")
 MODEL_TEMP = float(os.getenv("TEMPERATURE"))
 BOT_NAME = os.getenv("BOT_NAME", "BobaBot")
-BACKEND_URL = os.getenv("BACKEND_URL",)
-BACKEND_TOKEN = os.getenv("BACKEND_TOKEN")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_TOKEN = os.getenv("BACKEND_TOKEN", "devtoken")
 
 # ========== 模型与提示词 ==========
 SYSTEM_PROMPT = get_system_prompt(BOT_NAME)
@@ -164,6 +168,25 @@ with st.sidebar:
         st.markdown("\n".join(extras_lines))
         st.caption("温馨提示：部分饮品自带配料已在菜单中体现，额外加料按上表加价。")
 
+    st.write("---")
+    st.subheader("🎙 Voice")
+
+    st.session_state.voice_mode = st.toggle(
+        "启用语音输入/播报",
+        value=st.session_state.get("voice_mode", False),
+    )
+
+    st.session_state.tts_voice = st.selectbox(
+        "TTS voice",
+        ["alloy", "coral", "nova", "onyx", "sage", "shimmer", "verse",
+         "ash", "fable", "echo", "ballad", "marin", "cedar"],
+        index=0,
+    )
+
+    st.caption("提示：语音为 AI 生成（TTS）。")
+
+
+
 # ===== 处理工具调用 =====
 def handle_tool_call(tc):
     name, args = tc["name"], (tc.get("args") or {})
@@ -182,6 +205,54 @@ def handle_tool_call(tc):
         return can_make_hot.invoke(args)
     else:
         return {"ok": False, "error": f"未知工具：{name}"}
+
+
+
+
+def stt_transcribe(uploaded_file) -> str:
+    files = {
+        "file": (
+            uploaded_file.name,
+            uploaded_file.getvalue(),
+            uploaded_file.type or "application/octet-stream",
+        )
+    }
+
+    url = f"{BACKEND_URL.rstrip('/')}/voice/stt"
+
+    r = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {BACKEND_TOKEN}"},
+        files=files,
+        timeout=60,
+    )
+    r.raise_for_status()
+    return (r.json().get("text") or "").strip()
+
+
+
+
+def tts_speak(text: str):
+    if not st.session_state.get("voice_mode"):
+        return
+    if not text:
+        return
+    # 太长就先不播（后面再做“只播摘要/前N字”）
+    if len(text) > 600:
+        return
+
+    r = requests.post(
+        f"{BACKEND_URL}/voice/tts",
+        headers={"Authorization": f"Bearer {BACKEND_TOKEN}"},
+        json={"text": text, "voice": st.session_state.get("tts_voice", "alloy")},
+        timeout=60,
+    )
+    r.raise_for_status()
+    st.audio(r.content, format="audio/mp3")
+
+
+
+
 
 # ===== 单轮执行 =====
 def run_turn(user_text: str):
@@ -336,11 +407,31 @@ def run_turn(user_text: str):
                 )
             final = llm_with_tools.invoke(st.session_state.msgs)
         st.session_state.msgs.append(final)
-        st.chat_message("assistant").write(final.content or "（已完成工具调用）")
+        reply = final.content or "（已完成工具调用）"
+        st.chat_message("assistant").write(reply)
+        tts_speak(reply)
     else:
-        st.chat_message("assistant").write(ai.content or "（已收到）")
+        reply = ai.content or "（已收到）"
+        st.chat_message("assistant").write(reply)
+        tts_speak(reply)
+
 
 # ===== 输入框 =====
+if st.session_state.get("voice_mode"):
+    audio_up = st.file_uploader(
+        "上传语音（mp3/wav/m4a/webm）→ 自动转文字并发送",
+        type=["mp3", "wav", "m4a", "webm", "mp4", "mpeg", "mpga"],
+        key="voice_upload",
+    )
+    if audio_up and st.button("🎙 转文字并发送", key="voice_send"):
+        try:
+            transcript = stt_transcribe(audio_up)
+            if transcript:
+                run_turn(transcript)
+            else:
+                st.warning("没有识别到有效文本，请再试一次。")
+        except Exception as e:
+            st.error(f"语音识别失败：{e}")
 user = st.chat_input("加入购物车 → 确认订单 → 确认下单（生成待支付订单）→ 回复“已支付”获取取件码")
 if user:
     run_turn(user)
