@@ -406,7 +406,9 @@ async def voice_stt(
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     data = {
         "model": STT_MODEL,
-        "response_format": "json",  # returns {"text": "..."}
+        "response_format": "json",
+        "language": "zh",  # ✅ 强制中文（普通话）
+        "prompt": "请将音频内容转写为简体中文，使用中文标点；只输出中文，不要输出任何其他语言。",
     }
     files = {
         "file": (
